@@ -3,10 +3,10 @@ package handler
 import (
     "encoding/json"
     "errors"
+    "log"
     "net/http"
     "strconv"
-	"time"
-	"log"
+    "time"
 
     "kitchen/store"
 )
@@ -28,7 +28,11 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 }
 
 func (h *Handler) ListMenu(w http.ResponseWriter, r *http.Request) {
-    menus := h.Store.List(r.URL.Query().Get("type"))
+    menus, err := h.Store.List(r.Context(), r.URL.Query().Get("type"))
+    if err != nil {
+        writeError(w, http.StatusInternalServerError, "STORE_UNAVAILABLE", "อ่านคลังไม่สำเร็จ")
+        return
+    }
     writeJSON(w, http.StatusOK, menus)
 }
 
@@ -38,9 +42,13 @@ func (h *Handler) GetMenu(w http.ResponseWriter, r *http.Request) {
         writeError(w, http.StatusBadRequest, "BAD_ID", "เลขจานต้องเป็นตัวเลข")
         return
     }
-    menu, err := h.Store.Get(id)
+    menu, err := h.Store.Get(r.Context(), id)
     if errors.Is(err, store.ErrNotFound) {
         writeError(w, http.StatusNotFound, "MENU_NOT_FOUND", "ไม่พบเมนูหมายเลขนี้")
+        return
+    }
+    if err != nil {
+        writeError(w, http.StatusInternalServerError, "STORE_UNAVAILABLE", "อ่านคลังไม่สำเร็จ")
         return
     }
     writeJSON(w, http.StatusOK, menu)
@@ -57,21 +65,37 @@ func (h *Handler) CreateMenu(w http.ResponseWriter, r *http.Request) {
             "ต้องมีชื่อเมนู และราคาต้องมากกว่าศูนย์")
         return
     }
-    created := h.Store.Add(m)
+    created, err := h.Store.Add(r.Context(), m)
+    if err != nil {
+        writeError(w, http.StatusInternalServerError, "STORE_UNAVAILABLE", "เพิ่มเมนูไม่สำเร็จ")
+        return
+    }
     writeJSON(w, http.StatusCreated, created)
 }
 
 func (h *Handler) DeleteMenu(w http.ResponseWriter, r *http.Request) {
-    id, err := strconv.Atoi(r.PathValue("id"))
-    if err != nil {
-        writeError(w, http.StatusBadRequest, "BAD_ID", "เลขจานต้องเป็นตัวเลข")
-        return
-    }
-    if err := h.Store.Delete(id); errors.Is(err, store.ErrNotFound) {
-        writeError(w, http.StatusNotFound, "MENU_NOT_FOUND", "ไม่พบเมนูหมายเลขนี้")
-        return
-    }
-    w.WriteHeader(http.StatusNoContent)
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "BAD_ID", "เลขจานต้องเป็นตัวเลข")
+		return
+	}
+
+	err = h.Store.Delete(r.Context(), id)
+	
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "MENU_NOT_FOUND", "ไม่พบเมนูหมายเลขนี้")
+		return
+	} 
+	if errors.Is(err, store.ErrInUse) {
+		writeError(w, http.StatusConflict, "MENU_IN_USE", "เมนูนี้ถูกใช้ในใบสั่งไปแล้ว ลบไม่ได้")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "ลบข้อมูลล้มเหลว")
+		return
+	}
+	
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) Boom(w http.ResponseWriter, r *http.Request) {
@@ -98,12 +122,12 @@ func (h *Handler) SlowCtx(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Routes() *http.ServeMux {
     mux := http.NewServeMux()
-    mux.HandleFunc("GET /menu", h.ListMenu)
-    mux.HandleFunc("GET /menu/{id}", h.GetMenu)
-    mux.HandleFunc("POST /menu", h.CreateMenu)
-    mux.HandleFunc("DELETE /menu/{id}", h.DeleteMenu)
-	mux.HandleFunc("GET /boom", h.Boom)
-	mux.HandleFunc("GET /slow", h.Slow)
+    mux.HandleFunc("GET /menus", h.ListMenu)
+    mux.HandleFunc("GET /menus/{id}", h.GetMenu)
+    mux.HandleFunc("POST /menus", h.CreateMenu)
+    mux.HandleFunc("DELETE /menus/{id}", h.DeleteMenu)
+    mux.HandleFunc("GET /boom", h.Boom)
+    mux.HandleFunc("GET /slow", h.Slow)
     mux.HandleFunc("GET /slow-ctx", h.SlowCtx)
     return mux
 }

@@ -1,10 +1,10 @@
 package mw
 
 import (
+    "encoding/json"
     "log"
     "net/http"
     "time"
-	"encoding/json"
 )
 
 func Logging(next http.Handler) http.Handler {
